@@ -8,6 +8,8 @@ const http = require('http');
 const { Server } = require('socket.io');
 
 const app = express();
+// Enable trust proxy for Render (since it's behind a reverse proxy)
+app.set('trust proxy', 1);
 const server = http.createServer(app);
 
 // ─── Allowed CORS origins ────────────────────────────────────────────────────
