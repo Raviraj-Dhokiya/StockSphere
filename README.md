@@ -102,6 +102,13 @@ Free API tiers strictly limit data requests. To provide a "Wall Street" fast-pac
 3. Every 3 seconds, it generates a micro-fluctuation (-0.2% to +0.2%) on the baseline and emits it via sockets.
 4. Result: Users see a hyper-active, live-updating market without crashing the API limits.
 
+### 3. Finnhub API Integration
+The application heavily relies on the **Finnhub Stock API** for accurate market data. Here's how it is integrated:
+* **Symbol Search (`/search`):** When a user types in the search bar, the backend hits the `finnhub.io/api/v1/search` endpoint to find matching company tickers and names.
+* **Real-time Quotes (`/quote`):** Used to fetch the current price, day high/low, and open/close prices for individual stocks (e.g., AAPL, TSLA). This data initializes the Redux `quotes` state before WebSockets take over.
+* **Historical Data (`/stock/candle`):** To render the Chart.js graphs, the backend uses Finnhub's "Stock Candles" endpoint to fetch past prices (open, close, high, low, volume) over a specific resolution (e.g., daily) and time span (e.g., past 6 months).
+* **Company Profiles (`/stock/profile2`):** Fetches meta-information like the company's industry, market capitalization, and website to display on the Stock Detail page.
+
 ---
 
 ## 💻 Local Development Setup
