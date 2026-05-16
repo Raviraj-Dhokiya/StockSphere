@@ -40,6 +40,10 @@ const RegisterPage = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!form.name || !form.email || !form.password) return toast.error('Please fill in all fields');
+    
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(form.email)) return toast.error('Please enter a valid email address');
+    
     if (form.password.length < 6)               return toast.error('Password must be at least 6 characters');
     if (form.password !== form.confirmPassword)  return toast.error('Passwords do not match');
     const result = await dispatch(registerUser({ name: form.name, email: form.email, password: form.password }));
@@ -100,12 +104,12 @@ const RegisterPage = () => {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">Full name</label>
-              <input type="text" className="input-field" placeholder="John Doe"
+              <input type="text" className="input-field" placeholder="SunFlower"
                 value={form.name} onChange={set('name')} autoComplete="name" />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">Email address</label>
-              <input type="email" className="input-field" placeholder="you@example.com"
+              <input type="email" className="input-field" placeholder="ravi@gmail.com"
                 value={form.email} onChange={set('email')} autoComplete="email" />
             </div>
             <div>

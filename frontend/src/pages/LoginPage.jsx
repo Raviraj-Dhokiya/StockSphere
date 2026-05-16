@@ -32,6 +32,9 @@ const LoginPage = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!form.email || !form.password) return toast.error('Please fill in all fields');
+    
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(form.email)) return toast.error('Please enter a valid email address');
     const result = await dispatch(loginUser(form));
     if (loginUser.fulfilled.match(result)) toast.success('Welcome back! 🚀');
     else toast.error(result.payload || 'Login failed');
@@ -92,7 +95,7 @@ const LoginPage = () => {
               <label className="block text-sm font-medium text-gray-300 mb-2">Email address</label>
               <input
                 type="email" name="email" className="input-field"
-                placeholder="you@example.com" value={form.email}
+                placeholder="ravi@gmail.com" value={form.email}
                 onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
                 autoComplete="email"
               />
