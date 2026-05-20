@@ -10,10 +10,23 @@ const activeSymbols = new Set();
 
 const fetchStockPrice = async (symbol) => {
   try {
-    const res = await fetch(`${FINNHUB_BASE}/quote?symbol=${symbol.toUpperCase()}&token=${getKey()}`);
-    const quote = await res.json();
-    if (quote && quote.c) {
-      return { symbol: symbol.toUpperCase(), price: quote.c, change: quote.d, changePercent: quote.dp };
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol.toUpperCase()}?interval=1m`;
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const result = data.chart?.result?.[0];
+    if (result && result.meta && result.meta.regularMarketPrice !== undefined) {
+      const { regularMarketPrice, previousClose } = result.meta;
+      const change = regularMarketPrice - previousClose;
+      const changePercent = previousClose ? (change / previousClose) * 100 : 0;
+      return { 
+        symbol: symbol.toUpperCase(), 
+        price: regularMarketPrice, 
+        change: change, 
+        changePercent: changePercent 
+      };
     }
   } catch (error) {
     // console.error(`Failed to fetch price for ${symbol}`);
