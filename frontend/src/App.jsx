@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { Toaster, toast } from 'react-hot-toast';
@@ -9,6 +9,7 @@ import { addLiveNotification } from './store/slices/notificationSlice';
 import { updateStockPrice } from './store/slices/stocksSlice';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
+import { SocketContext } from './context/SocketContext';
 
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
@@ -24,7 +25,10 @@ function App() {
   const dispatch = useDispatch();
   const { user, token, initialLoading } = useSelector((state) => state.auth);
   const { quotes } = useSelector((state) => state.stocks);
-  const socketRef = useRef(null);
+
+  // ✅ FIX: Use useState instead of useRef so socket can be shared via SocketContext.
+  // Old code used useRef — context can't reactively share a ref value.
+  const [socket, setSocket] = useState(null);
   const subscribedSymbols = useRef(new Set());
 
   // On mount: check auth state
@@ -39,14 +43,15 @@ function App() {
   // Manage socket connection when user logs in/out
   useEffect(() => {
     if (user) {
-      // Create socket
-      const socket = io(import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000', {
+      // Create ONE single socket for the entire app lifetime of this session.
+      // StockDetailPage and other pages will use this via SocketContext — NOT create their own.
+      const socketInstance = io(import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000', {
         transports: ['websocket', 'polling'],
       });
-      socketRef.current = socket;
+      setSocket(socketInstance);
 
       // Join user room for notifications
-      socket.emit('join_user', user._id);
+      socketInstance.emit('join_user', user._id);
 
       // Notification handler
       const handleNotification = (notif) => {
@@ -62,15 +67,14 @@ function App() {
         dispatch(updateStockPrice(data));
       };
 
-      socket.on('new_notification', handleNotification);
-      socket.on('stock_price_update', handlePriceUpdate);
+      socketInstance.on('new_notification', handleNotification);
+      socketInstance.on('stock_price_update', handlePriceUpdate);
 
       return () => {
-        socket.emit('leave_user', user._id);
-        socket.off('new_notification', handleNotification);
-        socket.off('stock_price_update', handlePriceUpdate);
-        socket.disconnect();
-        socketRef.current = null;
+        socketInstance.off('new_notification', handleNotification);
+        socketInstance.off('stock_price_update', handlePriceUpdate);
+        socketInstance.disconnect();
+        setSocket(null);
         subscribedSymbols.current.clear();
       };
     }
@@ -78,16 +82,16 @@ function App() {
 
   // Subscribe to any new stocks loaded into Redux
   useEffect(() => {
-    if (socketRef.current && quotes) {
+    if (socket && quotes) {
       const currentSymbols = Object.keys(quotes);
       currentSymbols.forEach((sym) => {
         if (!subscribedSymbols.current.has(sym)) {
-          socketRef.current.emit('join_stock', sym);
+          socket.emit('join_stock', sym);
           subscribedSymbols.current.add(sym);
         }
       });
     }
-  }, [quotes]);
+  }, [quotes, socket]);
 
   // Show loading spinner while checking auth
   if (initialLoading) {
@@ -111,29 +115,33 @@ function App() {
           error: { iconTheme: { primary: '#ff4d6d', secondary: '#fff' } },
         }}
       />
-      <Routes>
-        {/* Public routes */}
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/register" element={<RegisterPage />} />
+      {/* ✅ FIX: Provide the single socket to all child components via context.
+          StockDetailPage now uses useSocket() instead of creating its own. */}
+      <SocketContext.Provider value={socket}>
+        <Routes>
+          {/* Public routes */}
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
 
-        {/* Protected routes */}
-        <Route element={<ProtectedRoute />}>
-          <Route element={<Layout />}>
-            <Route path="/dashboard" element={<DashboardPage />} />
-            <Route path="/market" element={<MarketPage />} />
-            <Route path="/watchlist" element={<WatchlistPage />} />
-            <Route path="/portfolio" element={<PortfolioPage />} />
-            <Route path="/community" element={<CommunityPage />} />
-            <Route path="/profile/:id" element={<ProfilePage />} />
-            <Route path="/stocks/:symbol" element={<StockDetailPage />} />
-            <Route path="/stock/:symbol" element={<StockDetailPage />} />
+          {/* Protected routes */}
+          <Route element={<ProtectedRoute />}>
+            <Route element={<Layout />}>
+              <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/market" element={<MarketPage />} />
+              <Route path="/watchlist" element={<WatchlistPage />} />
+              <Route path="/portfolio" element={<PortfolioPage />} />
+              <Route path="/community" element={<CommunityPage />} />
+              <Route path="/profile/:id" element={<ProfilePage />} />
+              <Route path="/stocks/:symbol" element={<StockDetailPage />} />
+              <Route path="/stock/:symbol" element={<StockDetailPage />} />
+            </Route>
           </Route>
-        </Route>
 
-        {/* Default redirect */}
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
-      </Routes>
+          {/* Default redirect */}
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        </Routes>
+      </SocketContext.Provider>
     </>
   );
 }

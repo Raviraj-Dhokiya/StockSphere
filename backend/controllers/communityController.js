@@ -16,9 +16,25 @@ exports.getFeed = async (req, res) => {
       .limit(50)
       .lean(); // Faster
 
-    // Get comment counts
-    for (let post of posts) {
-      post.commentCount = await Comment.countDocuments({ post: post._id });
+    // ✅ FIX: Single aggregation instead of N+1 loop queries
+    // Old code ran 1 DB query PER post (50 posts = 50 queries!)
+    if (posts.length > 0) {
+      const postIds = posts.map((p) => p._id);
+      const commentCounts = await Comment.aggregate([
+        { $match: { post: { $in: postIds } } },
+        { $group: { _id: '$post', count: { $sum: 1 } } },
+      ]);
+
+      // Build a lookup map: postId -> count
+      const countMap = {};
+      commentCounts.forEach((c) => {
+        countMap[c._id.toString()] = c.count;
+      });
+
+      // Attach count to each post
+      posts.forEach((post) => {
+        post.commentCount = countMap[post._id.toString()] || 0;
+      });
     }
 
     res.json({ success: true, posts });
@@ -80,8 +96,8 @@ exports.toggleLike = async (req, res) => {
     const index = post.likes.indexOf(req.user._id);
     if (index === -1) {
       post.likes.push(req.user._id);
-      // Notify post owner
-      createNotification(req, post.user, req.user._id, 'like', `${req.user.name} liked your post.`, `/post/${post._id}`);
+      // Notify post owner (await added — was missing, causing unhandled rejections)
+      await createNotification(req, post.user, req.user._id, 'like', `${req.user.name} liked your post.`, `/post/${post._id}`);
     } else {
       post.likes.splice(index, 1);
     }
@@ -111,8 +127,8 @@ exports.addComment = async (req, res) => {
 
     const populated = await comment.populate('user', 'name avatar');
     
-    // Notify
-    createNotification(req, post.user, req.user._id, 'comment', `${req.user.name} commented on your post.`, `/post/${post._id}`);
+    // Notify (await added — was missing, causing unhandled rejections)
+    await createNotification(req, post.user, req.user._id, 'comment', `${req.user.name} commented on your post.`, `/post/${post._id}`);
 
     if (req.io) req.io.emit('new_comment', { postId: post._id, comment: populated });
     

@@ -1,17 +1,21 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { addToWatchlist, removeFromWatchlist } from '../store/slices/watchlistSlice';
 import { buyStock, sellStock } from '../store/slices/portfolioSlice';
 import { fetchStockQuote, updateStockPrice } from '../store/slices/stocksSlice';
+import { useSocket } from '../context/SocketContext';
 import StockChart from '../components/StockChart';
 import toast from 'react-hot-toast';
-import io from 'socket.io-client';
 
 const StockDetailPage = () => {
   const { symbol } = useParams();
   const navigate = useNavigate();
   const dispatch = useDispatch();
+  // ✅ FIX: Use shared socket from context instead of creating a new one.
+  // Old code created a NEW socket on every page visit, causing duplicate connections,
+  // memory leaks, and broken notifications in App.jsx.
+  const socket = useSocket();
   const { stocks } = useSelector((state) => state.watchlist);
   const { quotes, loading: stocksLoading } = useSelector((state) => state.stocks);
   const { tradeLoading } = useSelector((state) => state.portfolio);
@@ -45,13 +49,10 @@ const StockDetailPage = () => {
     }
   }, [symbol, dispatch]);
 
-  // Socket for live price updates
+  // ✅ FIX: Use the shared socket from context to join/leave stock room.
+  // No more duplicate socket creation per page visit.
   useEffect(() => {
-    if (!symbol) return;
-
-    const socket = io(import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000', {
-      transports: ['websocket', 'polling'],
-    });
+    if (!symbol || !socket) return;
 
     socket.emit('join_stock', symbol.toUpperCase());
 
@@ -66,9 +67,9 @@ const StockDetailPage = () => {
     return () => {
       socket.emit('leave_stock', symbol.toUpperCase());
       socket.off('stock_price_update', handlePriceUpdate);
-      socket.disconnect();
+      // NOTE: Do NOT disconnect here — we don't own this socket!
     };
-  }, [symbol, dispatch]);
+  }, [symbol, socket, dispatch]);
 
   const handleWatchlist = async () => {
     if (isInWatchlist) {
@@ -85,6 +86,9 @@ const StockDetailPage = () => {
     e.preventDefault();
     const qty = Number(quantity);
     if (!qty || qty <= 0) return toast.error('Enter a valid quantity');
+
+    // ✅ FIX (Bug #11): Guard against stock being null to prevent crash
+    if (!stock) return toast.error('Stock data not loaded. Please wait.');
 
     if (tradeType === 'BUY') {
       const cost = stock.currentPrice * qty;

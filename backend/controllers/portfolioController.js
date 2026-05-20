@@ -1,6 +1,7 @@
 const Portfolio = require('../models/Portfolio');
 const Trade = require('../models/Trade');
 const User = require('../models/User');
+const mongoose = require('mongoose');
 const fetch = require('node-fetch');
 
 // ─── Shared in-memory cache (same pattern as stockController) ───
@@ -96,10 +97,18 @@ const buyStock = async (req, res) => {
   const qty = parseInt(quantity);
   const totalAmount = qty * pricePerShare;
 
+  // ✅ FIX: Wrap everything in a MongoDB transaction
+  // Old code: user.save() then portfolio.save() were separate calls.
+  // If portfolio.save() failed, balance was already deducted — money lost!
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
-    const user = await User.findById(req.user._id);
+    const user = await User.findById(req.user._id).session(session);
 
     if (user.portfolioBalance < totalAmount) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(400).json({
         success: false,
         message: `Insufficient balance. Need $${totalAmount.toFixed(2)}, have $${user.portfolioBalance.toFixed(2)}.`,
@@ -114,10 +123,10 @@ const buyStock = async (req, res) => {
     const balanceBefore = user.portfolioBalance;
     user.portfolioBalance -= totalAmount;
     user.portfolioBalance = parseFloat(user.portfolioBalance.toFixed(6));
-    await user.save();
+    await user.save({ session });
 
     // Find or create portfolio
-    let portfolio = await Portfolio.findOne({ user: user._id });
+    let portfolio = await Portfolio.findOne({ user: user._id }).session(session);
     if (!portfolio) {
       portfolio = new Portfolio({ user: user._id, holdings: [] });
     }
@@ -155,10 +164,10 @@ const buyStock = async (req, res) => {
       ? (portfolio.totalPnL / portfolio.totalInvested) * 100
       : 0;
 
-    await portfolio.save();
+    await portfolio.save({ session });
 
     // Record trade
-    const trade = await Trade.create({
+    const trade = await Trade.create([{
       user: user._id,
       symbol: symbol.toUpperCase(),
       companyName: companyName || symbol.toUpperCase(),
@@ -168,16 +177,23 @@ const buyStock = async (req, res) => {
       totalAmount,
       balanceBefore,
       balanceAfter: user.portfolioBalance,
-    });
+    }], { session });
+
+    // All good — commit the transaction
+    await session.commitTransaction();
+    session.endSession();
 
     res.json({
       success: true,
       message: `Successfully bought ${qty} shares of ${symbol.toUpperCase()}`,
       balance: user.portfolioBalance,
-      trade,
+      trade: trade[0],
     });
 
   } catch (error) {
+    // Something failed — roll back everything (balance restored, no partial state)
+    await session.abortTransaction();
+    session.endSession();
     console.error('Buy stock error:', error);
     res.status(500).json({ success: false, message: 'Failed to execute buy order.' });
   }
@@ -196,19 +212,30 @@ const sellStock = async (req, res) => {
   const qty = parseInt(quantity);
   const totalAmount = qty * pricePerShare;
 
+  // ✅ FIX: Wrap everything in a MongoDB transaction
+  // Old code: user.save() and portfolio.save() were separate — if one failed, data became inconsistent.
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
-    let portfolio = await Portfolio.findOne({ user: req.user._id });
+    let portfolio = await Portfolio.findOne({ user: req.user._id }).session(session);
     if (!portfolio) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(400).json({ success: false, message: 'Portfolio not found.' });
     }
 
     const holdingIdx = portfolio.holdings.findIndex((h) => h.symbol === symbol.toUpperCase());
     if (holdingIdx === -1) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(400).json({ success: false, message: 'You do not own this stock.' });
     }
 
     const holding = portfolio.holdings[holdingIdx];
     if (holding.quantity < qty) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(400).json({
         success: false,
         message: `Insufficient shares. You own ${holding.quantity}, trying to sell ${qty}.`,
@@ -219,13 +246,13 @@ const sellStock = async (req, res) => {
     const currentPrice = await getCurrentPrice(symbol);
     const salePrice = currentPrice || pricePerShare;
 
-    const user = await User.findById(req.user._id);
+    const user = await User.findById(req.user._id).session(session);
     const balanceBefore = user.portfolioBalance;
 
     // Add proceeds to balance
     user.portfolioBalance += totalAmount;
     user.portfolioBalance = parseFloat(user.portfolioBalance.toFixed(6));
-    await user.save();
+    await user.save({ session });
 
     // Calculate P&L
     const averageBuyPrice = holding.averageBuyPrice;
@@ -253,10 +280,10 @@ const sellStock = async (req, res) => {
       ? (portfolio.totalPnL / portfolio.totalInvested) * 100
       : 0;
 
-    await portfolio.save();
+    await portfolio.save({ session });
 
     // Record trade
-    const trade = await Trade.create({
+    const trade = await Trade.create([{
       user: user._id,
       symbol: symbol.toUpperCase(),
       companyName: holding.companyName,
@@ -269,18 +296,25 @@ const sellStock = async (req, res) => {
       pnlPercent,
       balanceBefore,
       balanceAfter: user.portfolioBalance,
-    });
+    }], { session });
+
+    // All good — commit the transaction
+    await session.commitTransaction();
+    session.endSession();
 
     res.json({
       success: true,
       message: `Successfully sold ${qty} shares of ${symbol.toUpperCase()}`,
       balance: user.portfolioBalance,
-      trade,
+      trade: trade[0],
       pnl,
       pnlPercent,
     });
 
   } catch (error) {
+    // Something failed — roll back everything (no partial state)
+    await session.abortTransaction();
+    session.endSession();
     console.error('Sell stock error:', error);
     res.status(500).json({ success: false, message: 'Failed to execute sell order.' });
   }

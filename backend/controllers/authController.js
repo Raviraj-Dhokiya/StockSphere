@@ -108,6 +108,12 @@ const login = async (req, res) => {
 const getMe = async (req, res) => {
   try {
     const user = await User.findById(req.user._id);
+
+    // User could have been deleted from DB but token still valid
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found. Please log in again.' });
+    }
+
     res.json({
       success: true,
       user: {
